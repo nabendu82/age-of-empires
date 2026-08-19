@@ -12,13 +12,13 @@ export function GameCanvas() {
     <Canvas
       className="absolute inset-0"
       shadows
-      camera={{ fov: 45, near: 0.1, far: 400, position: [8, 22, 8] }}
+      camera={{ fov: 45, near: 0.1, far: 700, position: [8, 22, 8] }}
       onContextMenu={(e) => e.preventDefault()}
       gl={{ antialias: true, alpha: false }}
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     >
       <color attach="background" args={[COLORS.sky]} />
-      <fog attach="fog" args={['#b7d4a4', 110, 260]} />
+      <fog attach="fog" args={['#b7d4a4', 140, 340]} />
       <hemisphereLight args={['#fff6dc', '#5a8c48', 1.05]} />
       <ambientLight intensity={0.72} />
       <directionalLight

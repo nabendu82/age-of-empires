@@ -8,18 +8,22 @@ import { isBuilding, isResource, isUnit, type Entity, type PlacementKind } from 
 import { hover, isPlacementValid, useGameStore } from '../game/store'
 import { BarracksModel } from './models/Barracks'
 import { BerryBushModel } from './models/BerryBush'
-import { FarmModel } from './models/Farm'
+import { CaravanseraiModel } from './models/Caravanserai'
+import { FoundryModel } from './models/Foundry'
 import { GoldMineModel } from './models/GoldMine'
+import { HerdModel } from './models/Herd'
 import { HouseModel } from './models/House'
 import { LumberCampModel } from './models/LumberCamp'
+import { ManorModel } from './models/Manor'
 import { MillModel } from './models/Mill'
 import { MiningCampModel } from './models/MiningCamp'
 import { PalisadeModel } from './models/Palisade'
 import { ProjectileModel } from './models/Projectile'
 import { RallyFlag } from './models/RallyFlag'
+import { SacredFieldModel } from './models/SacredField'
+import { AgraFortModel } from './models/AgraFort'
 import { TownCenterModel } from './models/TownCenter'
 import { TreeModel } from './models/Tree'
-import { WatchTowerModel } from './models/WatchTower'
 import { AnimatedUnit } from './units/AnimatedUnit'
 import { isExplored, isInVision } from '../game/fog'
 
@@ -29,8 +33,8 @@ function GhostOf({ kind }: { kind: NonNullable<PlacementKind> }) {
       return <HouseModel color="#4ade80" />
     case 'barracks':
       return <BarracksModel color="#4ade80" />
-    case 'farm':
-      return <FarmModel color="#4ade80" />
+    case 'sacredField':
+      return <SacredFieldModel color="#4ade80" />
     case 'lumberCamp':
       return <LumberCampModel color="#4ade80" />
     case 'mill':
@@ -41,48 +45,69 @@ function GhostOf({ kind }: { kind: NonNullable<PlacementKind> }) {
       return <TownCenterModel color="#4ade80" />
     case 'palisade':
       return <PalisadeModel color="#4ade80" />
-    case 'watchTower':
-      return <WatchTowerModel color="#4ade80" />
+    case 'caravanserai':
+      return <CaravanseraiModel color="#4ade80" />
+    case 'agraFort':
+      return <AgraFortModel color="#4ade80" />
+    case 'foundry':
+      return <FoundryModel color="#4ade80" />
     default:
       return null
   }
 }
 
 function ModelOf({ entity }: { entity: Entity }) {
+  const accent = entity.team === 'enemy' ? COLORS.enemy : COLORS.player
   switch (entity.kind) {
     case 'villager':
-    case 'swordsman':
-    case 'archer':
-    case 'scout':
-    case 'mangonel':
+    case 'sepoy':
+    case 'rajput':
+    case 'sowar':
+    case 'gurkha':
+    case 'mahout':
+    case 'siegeElephant':
+    case 'pikeman':
+    case 'longbowman':
+    case 'redcoat':
+    case 'hussar':
+    case 'dragoon':
+    case 'falconet':
       return <AnimatedUnit id={entity.id} kind={entity.kind} />
     case 'townCenter':
-      return <TownCenterModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <TownCenterModel color={accent} team={entity.team} />
     case 'barracks':
-      return <BarracksModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <BarracksModel color={accent} />
     case 'house':
-      return <HouseModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
-    case 'farm':
-      return <FarmModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <HouseModel color={accent} british={entity.team === 'enemy'} />
+    case 'sacredField':
+      return <SacredFieldModel color={accent} />
     case 'lumberCamp':
-      return <LumberCampModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <LumberCampModel color={accent} />
     case 'mill':
-      return <MillModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <MillModel color={accent} />
     case 'miningCamp':
-      return <MiningCampModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <MiningCampModel color={accent} />
     case 'palisade':
-      return <PalisadeModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
-    case 'watchTower':
-      return <WatchTowerModel color={entity.team === 'enemy' ? COLORS.enemy : COLORS.player} />
+      return <PalisadeModel color={accent} />
+    case 'caravanserai':
+      return <CaravanseraiModel color={accent} />
+    case 'agraFort':
+      return <AgraFortModel color={accent} />
+    case 'foundry':
+      return <FoundryModel color={accent} />
+    case 'manor':
+      return <ManorModel color={accent} />
     case 'tree':
       return <TreeModel scale={entity.scale} />
     case 'berryBush':
       return <BerryBushModel scale={entity.scale} />
     case 'goldMine':
       return <GoldMineModel scale={entity.scale} />
+    case 'herd':
+      return <HerdModel scale={entity.scale} />
     case 'projectile':
       return (
-        <group scale={entity.splash > 0 ? 2.4 : 1}>
+        <group scale={entity.splash > 0 ? 2.6 : 1}>
           <ProjectileModel />
         </group>
       )
@@ -92,15 +117,15 @@ function ModelOf({ entity }: { entity: Entity }) {
 }
 
 function barHeight(e: Entity): number {
-  if (e.kind === 'townCenter') return 3.7
-  if (e.kind === 'watchTower') return 3.3
-  if (e.kind === 'barracks') return 2.3
-  if (e.kind === 'house' || e.kind === 'mill') return 2.1
+  if (e.kind === 'townCenter' || e.kind === 'agraFort') return 3.6
+  if (e.kind === 'caravanserai' || e.kind === 'foundry' || e.kind === 'barracks') return 2.4
+  if (e.kind === 'house' || e.kind === 'mill' || e.kind === 'manor') return 2.1
   if (e.kind === 'lumberCamp' || e.kind === 'miningCamp') return 1.9
   if (e.kind === 'palisade') return 1.7
-  if (e.kind === 'farm' || e.kind === 'projectile' || isResource(e)) return 0
-  if (e.kind === 'scout') return 2.15
-  if (e.kind === 'mangonel') return 1.7
+  if (e.kind === 'sacredField' || e.kind === 'projectile' || isResource(e)) return 0
+  if (e.kind === 'mahout' || e.kind === 'siegeElephant') return 2.85
+  if (e.kind === 'sowar' || e.kind === 'hussar' || e.kind === 'dragoon') return 2.2
+  if (e.kind === 'falconet') return 1.7
   if (isUnit(e)) return 1.85
   return 1.45
 }
@@ -169,8 +194,8 @@ function EntityInstance({ id }: { id: string }) {
   }
 
   const interactive = snapshot.kind !== 'projectile'
-  const pickH = snapshot.kind === 'watchTower' ? 3.2 : isBuilding(snapshot) ? 2.2 : 1.5
-  const pickY = snapshot.kind === 'watchTower' ? 1.4 : isBuilding(snapshot) ? 0.9 : 0.55
+  const pickH = snapshot.kind === 'agraFort' ? 3.2 : isBuilding(snapshot) ? 2.2 : 1.5
+  const pickY = snapshot.kind === 'agraFort' ? 1.4 : isBuilding(snapshot) ? 0.9 : 0.55
 
   return (
     <group

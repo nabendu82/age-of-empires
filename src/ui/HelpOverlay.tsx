@@ -1,4 +1,5 @@
 import { CircleHelp, Play, X } from 'lucide-react'
+import { GAME_TITLE } from '../game/constants'
 import { useGameStore } from '../game/store'
 
 function Section({ title, items }: { title: string; items: string[] }) {
@@ -27,69 +28,71 @@ export function HelpOverlay() {
 
   return (
     <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-black/65 p-4">
-      <div className="relative max-h-[min(40rem,90vh)] w-full max-w-3xl overflow-y-auto rounded-md border border-amber-700 bg-gradient-to-b from-[#3a2a18] to-[#1a120a] px-7 py-6 shadow-2xl">
+      <div className="relative flex max-h-[min(44rem,92vh)] w-full max-w-3xl flex-col overflow-hidden rounded-md border border-amber-700 bg-gradient-to-b from-[#3a2a18] to-[#1a120a] shadow-2xl">
         <button
           type="button"
-          className="absolute right-3 top-3 rounded-sm p-1 text-amber-200/80 hover:bg-black/30 hover:text-amber-50"
+          className="absolute right-3 top-3 z-10 rounded-sm p-1 text-amber-200/80 hover:bg-black/30 hover:text-amber-50"
           aria-label="Close help"
           onClick={() => useGameStore.getState().closeHelp()}
         >
           <X size={18} />
         </button>
 
-        <div className="pr-8 text-2xl font-bold text-amber-100">Age of Empires · RTS Prototype</div>
-        <p className="mt-1 text-sm text-amber-200/75">
-          Destroy the enemy Town Center to win. The match stays paused until you press {playLabel}.
-        </p>
+        <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-2 pt-6">
+          <div className="pr-8 text-2xl font-bold text-amber-100">{GAME_TITLE}</div>
+          <p className="mt-1 text-sm text-amber-200/75">
+            Destroy the British Town Center to win. The match stays paused until you press {playLabel}.
+          </p>
 
-        <div className="mt-5 grid gap-5 sm:grid-cols-2">
-          <Section
-            title="Controls"
-            items={[
-              'Left-click to select a unit or building',
-              'Drag a box to select many units; Shift-click to add or remove',
-              'Right-click to move, gather, attack, or set a rally point',
-              'F or Attack-move: soldiers fight enemies they pass',
-              'Box or Line formation on the command bar for group moves',
-              '. (period) selects the next idle villager',
-              'Ctrl+1–9 saves a control group; 1–9 recalls it',
-              'WASD or arrow keys pan; mouse wheel zooms; middle-drag pans',
-              'Escape cancels placement, attack-move, or selection',
-            ]}
-          />
-          <Section
-            title="Economy"
-            items={[
-              'Villagers gather wood, food, and gold, then drop it at the Town Center',
-              'Age up to Feudal at the Town Center to unlock farms, towers, scouts, archers, and mangonels',
-              'Build Farms for renewable food after berries run out',
-              'Lumber Camp, Mill, and Mining Camp are closer drop-offs',
-              'A second Town Center lets you boom from two bases',
-            ]}
-          />
-          <Section
-            title="Buildings & army"
-            items={[
-              'House raises population; Barracks trains swordsmen, then archers and mangonels in Feudal',
-              'Scout cavalry is a fast Feudal unit from the Town Center',
-              'Palisades are cheap wood walls that block pathing',
-              'Watch Towers auto-shoot nearby enemies (Feudal)',
-              'Fog of war hides the unexplored map; the minimap matches',
-              'Right-click the map with a Town Center or Barracks selected to set rally',
-            ]}
-          />
-          <Section
-            title="Enemy"
-            items={[
-              'The first raid marches on your Town Center around 3:30',
-              'Waves 2 and 3 follow with mixed swordsmen and archers',
-              'Enemy villagers gather on their side of the map',
-              'They rebuild a Barracks if you destroy it, and defend their Town Center',
-            ]}
-          />
+          <div className="mt-5 grid gap-5 sm:grid-cols-2">
+            <Section
+              title="Controls"
+              items={[
+                'Left-click to select a unit or building',
+                'Drag a box to select many units; Shift-click to add or remove',
+                'Right-click to move, gather, attack, or set a rally point',
+                'F or Attack-move: soldiers fight enemies they pass',
+                'Box or Line formation on the command bar for group moves',
+                '. (period) selects the next idle villager',
+                'Ctrl+1–9 saves a control group; 1–9 recalls it',
+                'WASD or arrow keys pan; mouse wheel zooms; middle-drag pans',
+                'Escape cancels placement, attack-move, or selection',
+              ]}
+            />
+            <Section
+              title="Indian economy"
+              items={[
+                'Villagers cost 100 Wood and gather wood, berries, herds, and gold',
+                'Sacred Fields generate Food continuously once built',
+                'Drop off at the Town Center, or closer Lumber Camps, Mills, and Mining Camps',
+                'Discovery → Commerce costs 800 Food; Commerce → Fortress costs 1200 Food and 1000 Gold',
+                'Houses add +10 population; the Town Center starts at 20 pop',
+              ]}
+            />
+            <Section
+              title="Ages & army"
+              items={[
+                'Commerce unlocks Barracks (Sepoy, Rajput) and Caravanserai (Sowar)',
+                'Fortress unlocks Gurkha, Mahout Lancer, Siege Elephant, Agra Fort, and the Foundry',
+                'Cavalry beats ranged infantry; pikes and Sepoys beat cavalry; elephants soak damage; siege smashes buildings',
+                'Palisades block pathing; Agra Fort auto-fires on nearby enemies',
+              ]}
+            />
+            <Section
+              title="British enemy"
+              items={[
+                'Red-brick Town Center across the map; Manors spawn free settlers',
+                'They age to Commerce at 8:00 and Fortress at 18:00',
+                'Wave 1 ~10:00: longbows, pikes, and redcoats',
+                'Wave 2 ~18:00: redcoats and hussars',
+                'Wave 3 ~26:00: redcoats, dragoons, and a Falconet cannon',
+                'Raids keep coming every 4 minutes until a Town Center falls; each raid is larger and the British Town Center gains two more guards',
+              ]}
+            />
+          </div>
         </div>
 
-        <div className="mt-6 flex justify-center">
+        <div className="flex shrink-0 justify-center border-t border-amber-800/50 bg-[#1a120a] px-7 py-4">
           <button
             type="button"
             className="inline-flex items-center gap-2 rounded-sm border border-amber-500 bg-[#2a1d10] px-8 py-2.5 text-sm font-semibold text-amber-50 hover:bg-[#3b2a16]"

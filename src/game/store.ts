@@ -1,12 +1,16 @@
 import { create } from 'zustand'
 import {
-  AGE_UP_TIME,
+  AGE_UP_COMMERCE,
+  AGE_UP_FORTRESS,
   BUILDING_STATS,
+  CAMERA,
   COSTS,
+  MAP_HALF,
   PLAYER_BASE,
   TRAIN_TIME,
+  GUARD_CAP,
 } from './constants'
-import { setMuted } from './audio'
+import { setMuted, startMusic } from './audio'
 import { resetFog, tickFog } from './fog'
 import {
   createBuilding,
@@ -22,7 +26,7 @@ import {
   isGatherable,
   isMilitary,
   isUnit,
-  needsFeudal,
+  requiredAge,
   type Age,
   type BuildingKind,
   type CommandMode,
@@ -37,7 +41,7 @@ import {
 export const view = {
   targetX: PLAYER_BASE.x,
   targetZ: PLAYER_BASE.z,
-  distance: 22,
+  distance: CAMERA.defaultDistance,
 }
 
 export const hover = {
@@ -66,6 +70,9 @@ export interface GameStore extends HudSlice {
   enemyGold: number
   aiTimer: number
   controlGroups: Record<number, string[]>
+  manorTimer: number
+  barracksRebuildAt: number
+  guardCap: number
   select: (id: string | null, additive?: boolean) => void
   selectMany: (ids: string[]) => void
   setPlacement: (kind: PlacementKind) => void
@@ -119,6 +126,7 @@ function hudFrom(s: {
   aging: boolean
   formation: Formation
   muted: boolean
+  enemyAge: Age
 }): HudSlice {
   const { pop, popCap } = popCounts(s.entities)
   return {
@@ -144,6 +152,7 @@ function hudFrom(s: {
     aging: s.aging,
     formation: s.formation,
     muted: s.muted,
+    enemyAge: s.enemyAge,
   }
 }
 
@@ -151,22 +160,25 @@ function freshWorld() {
   const world = generateWorld()
   view.targetX = PLAYER_BASE.x
   view.targetZ = PLAYER_BASE.z
-  view.distance = 22
+  view.distance = CAMERA.defaultDistance
   resetFog()
   tickFog(Object.values(world.entities))
   return {
     entities: world.entities,
     nextId: world.nextId,
-    enemyWood: 80,
-    enemyFood: 80,
-    enemyGold: 40,
+    enemyWood: 140,
+    enemyFood: 120,
+    enemyGold: 80,
     aiTimer: 0,
     controlGroups: {},
+    manorTimer: 0,
+    barracksRebuildAt: 0,
+    guardCap: GUARD_CAP,
     ...hudFrom({
       entities: world.entities,
-      wood: 150,
-      food: 100,
-      gold: 0,
+      wood: 400,
+      food: 250,
+      gold: 80,
       selectedId: null,
       selectedIds: [],
       placementKind: null,
@@ -183,6 +195,7 @@ function freshWorld() {
       aging: false,
       formation: 'box',
       muted: false,
+      enemyAge: 0,
     }),
   }
 }
@@ -243,7 +256,7 @@ export function addResource(team: Team, kind: 'wood' | 'food' | 'gold', amount: 
 
 export function isPlacementValid(x: number, z: number, kind: NonNullable<PlacementKind>): boolean {
   const radius = BUILDING_STATS[kind].radius
-  if (Math.abs(x) > 27 || Math.abs(z) > 27) return false
+  if (Math.abs(x) > MAP_HALF - 3 || Math.abs(z) > MAP_HALF - 3) return false
   const { entities } = useGameStore.getState()
   const pad = kind === 'palisade' ? 0.08 : 0.7
   for (const e of Object.values(entities)) {
@@ -356,7 +369,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setPlacement: (kind) => {
     const villagers = selectedVillagers()
     if (kind && villagers.length === 0) return
-    if (kind && needsFeudal(kind) && get().playerAge < 1) return
+    if (kind && requiredAge(kind) > get().playerAge) return
     set({ placementKind: kind, commandMode: 'none' })
     markHud()
   },
@@ -372,7 +385,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!kind) return false
     const villager = selectedVillagers()[0]
     if (!villager) return false
-    if (needsFeudal(kind) && s.playerAge < 1) return false
+    if (requiredAge(kind) > s.playerAge) return false
     if (!isPlacementValid(x, z, kind)) return false
     const cost = COSTS[kind]
     if (!spend(cost, 'player')) return false
@@ -488,10 +501,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!b || b.team !== 'player' || !isComplete(b) || b.dying) return
 
     const allowed =
-      (b.kind === 'townCenter' && (kind === 'villager' || kind === 'scout')) ||
-      (b.kind === 'barracks' && (kind === 'swordsman' || kind === 'archer' || kind === 'mangonel'))
+      (b.kind === 'townCenter' && kind === 'villager') ||
+      (b.kind === 'barracks' && (kind === 'sepoy' || kind === 'rajput' || kind === 'gurkha')) ||
+      (b.kind === 'caravanserai' && (kind === 'sowar' || kind === 'mahout')) ||
+      (b.kind === 'foundry' && kind === 'siegeElephant')
     if (!allowed) return
-    if (needsFeudal(kind) && s.playerAge < 1) return
+    if (requiredAge(kind) > s.playerAge) return
     if (b.trainQueue.length >= 5) return
 
     const { pop, popCap } = popCounts(s.entities)
@@ -545,19 +560,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
   closeHelp: () => {
     set({ helpOpen: false })
     tickFog(Object.values(get().entities))
+    startMusic()
     markHud()
   },
 
   startAgeUp: () => {
     const s = get()
-    if (s.playerAge >= 1 || s.aging) return
+    if (s.playerAge >= 2 || s.aging) return
     const tc = selectedEntity()
     if (!tc || tc.kind !== 'townCenter' || tc.team !== 'player' || !isComplete(tc)) return
-    if (!spend(COSTS.feudal, 'player')) return
+    const cost = s.playerAge === 0 ? COSTS.commerce : COSTS.fortress
+    const duration = s.playerAge === 0 ? AGE_UP_COMMERCE : AGE_UP_FORTRESS
+    if (!spend(cost, 'player')) return
     s.aging = true
-    s.ageTimer = AGE_UP_TIME
+    s.ageTimer = duration
     markHud()
-    set({ aging: true, ageTimer: AGE_UP_TIME })
+    set({ aging: true, ageTimer: duration })
   },
 
   setFormation: (mode) => {
@@ -617,8 +635,8 @@ function debugSetupDefense(): void {
   const id = allocId()
   s.entities[id] = createBuilding(id, 'barracks', 'player', tc.x + 6.5, tc.z + 0.8, true)
   const barracks = s.entities[id]
-  spawnUnit('swordsman', 'player', barracks)
-  spawnUnit('swordsman', 'player', barracks)
+  spawnUnit('sepoy', 'player', barracks)
+  spawnUnit('rajput', 'player', barracks)
   s.worldEpoch += 1
   markHud()
 }

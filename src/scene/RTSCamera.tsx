@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { CAMERA, MAP_HALF } from '../game/constants'
 import { useGameStore, view } from '../game/store'
+import { isUnit } from '../game/types'
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v))
@@ -39,7 +40,7 @@ export function RTSCamera() {
         const s = useGameStore.getState()
         const hasUnits = s.selectedIds.some((id) => {
           const ent = s.entities[id]
-          return ent && (ent.kind === 'swordsman' || ent.kind === 'archer' || ent.kind === 'villager')
+          return ent && (isUnit(ent) && ent.team === 'player')
         })
         if (hasUnits) {
           e.preventDefault()

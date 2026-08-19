@@ -2,22 +2,40 @@ export type Team = 'player' | 'enemy' | 'neutral'
 
 export type ResourceKind = 'wood' | 'food' | 'gold'
 
-export type Age = 0 | 1
+export type Age = 0 | 1 | 2
 
 export type Formation = 'box' | 'line'
 
-export type UnitKind = 'villager' | 'swordsman' | 'archer' | 'scout' | 'mangonel'
+export type UnitClass = 'villager' | 'meleeInf' | 'rangedInf' | 'cavalry' | 'elephant' | 'siege'
+
+export type UnitKind =
+  | 'villager'
+  | 'sepoy'
+  | 'rajput'
+  | 'sowar'
+  | 'gurkha'
+  | 'mahout'
+  | 'siegeElephant'
+  | 'pikeman'
+  | 'longbowman'
+  | 'redcoat'
+  | 'hussar'
+  | 'dragoon'
+  | 'falconet'
 
 export type BuildingKind =
   | 'townCenter'
   | 'barracks'
   | 'house'
-  | 'farm'
+  | 'sacredField'
   | 'lumberCamp'
   | 'mill'
   | 'miningCamp'
   | 'palisade'
-  | 'watchTower'
+  | 'caravanserai'
+  | 'agraFort'
+  | 'foundry'
+  | 'manor'
 
 export type EntityKind =
   | UnitKind
@@ -25,6 +43,7 @@ export type EntityKind =
   | 'tree'
   | 'berryBush'
   | 'goldMine'
+  | 'herd'
   | 'projectile'
 
 export type OrderType =
@@ -81,18 +100,22 @@ export interface Entity {
   rallyX: number
   rallyZ: number
   hasRally: boolean
+  gatherKind: 'tree' | 'berryBush' | 'goldMine' | 'herd' | null
+  guard: boolean
 }
 
 export type PlacementKind =
   | 'barracks'
   | 'house'
-  | 'farm'
+  | 'sacredField'
   | 'lumberCamp'
   | 'mill'
   | 'miningCamp'
   | 'townCenter'
   | 'palisade'
-  | 'watchTower'
+  | 'caravanserai'
+  | 'agraFort'
+  | 'foundry'
   | null
 
 export type CommandMode = 'none' | 'attackMove'
@@ -120,19 +143,28 @@ export interface HudSlice {
   aging: boolean
   formation: Formation
   muted: boolean
+  enemyAge: Age
 }
 
 export function idleOrder(): Order {
   return { type: 'idle', x: 0, z: 0, targetId: null }
 }
 
-export function isUnit(e: Entity): boolean {
+export function isUnit(e: Entity): e is Entity & { kind: UnitKind } {
   return (
     e.kind === 'villager' ||
-    e.kind === 'swordsman' ||
-    e.kind === 'archer' ||
-    e.kind === 'scout' ||
-    e.kind === 'mangonel'
+    e.kind === 'sepoy' ||
+    e.kind === 'rajput' ||
+    e.kind === 'sowar' ||
+    e.kind === 'gurkha' ||
+    e.kind === 'mahout' ||
+    e.kind === 'siegeElephant' ||
+    e.kind === 'pikeman' ||
+    e.kind === 'longbowman' ||
+    e.kind === 'redcoat' ||
+    e.kind === 'hussar' ||
+    e.kind === 'dragoon' ||
+    e.kind === 'falconet'
   )
 }
 
@@ -141,22 +173,24 @@ export function isBuilding(e: Entity): boolean {
     e.kind === 'townCenter' ||
     e.kind === 'barracks' ||
     e.kind === 'house' ||
-    e.kind === 'farm' ||
+    e.kind === 'sacredField' ||
     e.kind === 'lumberCamp' ||
     e.kind === 'mill' ||
     e.kind === 'miningCamp' ||
     e.kind === 'palisade' ||
-    e.kind === 'watchTower'
+    e.kind === 'caravanserai' ||
+    e.kind === 'agraFort' ||
+    e.kind === 'foundry' ||
+    e.kind === 'manor'
   )
 }
 
 export function isResource(e: Entity): boolean {
-  return e.kind === 'tree' || e.kind === 'berryBush' || e.kind === 'goldMine'
+  return e.kind === 'tree' || e.kind === 'berryBush' || e.kind === 'goldMine' || e.kind === 'herd'
 }
 
 export function isGatherable(e: Entity): boolean {
   if (e.dying || e.amount <= 0 || !e.resourceType) return false
-  if (e.kind === 'farm') return isComplete(e)
   return isResource(e)
 }
 
@@ -173,12 +207,7 @@ export function isDropoff(e: Entity, resource: ResourceKind | null = null): bool
 }
 
 export function isMilitary(e: Entity): boolean {
-  return (
-    e.kind === 'swordsman' ||
-    e.kind === 'archer' ||
-    e.kind === 'scout' ||
-    e.kind === 'mangonel'
-  )
+  return isUnit(e) && e.kind !== 'villager'
 }
 
 export function isComplete(e: Entity): boolean {
@@ -186,15 +215,53 @@ export function isComplete(e: Entity): boolean {
 }
 
 export function canTrain(e: Entity): boolean {
-  return e.kind === 'townCenter' || e.kind === 'barracks'
+  return (
+    e.kind === 'townCenter' ||
+    e.kind === 'barracks' ||
+    e.kind === 'caravanserai' ||
+    e.kind === 'foundry'
+  )
 }
 
-export function needsFeudal(kind: string): boolean {
+export function requiredAge(kind: string): Age {
+  if (
+    kind === 'barracks' ||
+    kind === 'caravanserai' ||
+    kind === 'sepoy' ||
+    kind === 'rajput' ||
+    kind === 'sowar'
+  ) {
+    return 1
+  }
+  if (
+    kind === 'agraFort' ||
+    kind === 'foundry' ||
+    kind === 'gurkha' ||
+    kind === 'mahout' ||
+    kind === 'siegeElephant'
+  ) {
+    return 2
+  }
+  return 0
+}
+
+export function isRangedKind(kind: string): boolean {
   return (
-    kind === 'farm' ||
-    kind === 'watchTower' ||
-    kind === 'archer' ||
-    kind === 'scout' ||
-    kind === 'mangonel'
+    kind === 'sepoy' ||
+    kind === 'gurkha' ||
+    kind === 'longbowman' ||
+    kind === 'redcoat' ||
+    kind === 'dragoon' ||
+    kind === 'falconet' ||
+    kind === 'siegeElephant' ||
+    kind === 'agraFort'
   )
+}
+
+export function isMusketKind(kind: string): boolean {
+  return kind === 'sepoy' || kind === 'gurkha' || kind === 'redcoat' || kind === 'dragoon'
+}
+
+export function isSiegeKind(kind: string): boolean {
+  return kind === 'falconet' || kind === 'siegeElephant'
 }

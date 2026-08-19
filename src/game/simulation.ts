@@ -1,37 +1,41 @@
 import {
   AGGRO_RANGE,
+  AI_COMMERCE_TIME,
   AI_DEFEND_RANGE,
-  AI_ENEMY_FEUDAL_TIME,
-  AI_FIRST_WAVE_SIZE,
+  AI_FORTRESS_TIME,
   AI_INTERVAL,
-  AI_REINFORCE_DELAY,
-  AI_SPAWN_DELAY,
-  AI_WAVE2_DELAY,
-  AI_WAVE2_SIZE,
-  AI_WAVE3_DELAY,
-  AI_WAVE3_SIZE,
-  AI_WAVE_DELAY,
+  AI_MANOR_TIME,
+  AI_WAVE1_TIME,
+  AI_WAVE2_TIME,
+  AI_WAVE3_TIME,
+  AI_WAVE_INTERVAL,
   ATTACK_COOLDOWN,
   ATTACK_MOVE_AGGRO,
+  BARRACKS_REBUILD,
   BUILD_TIME,
   CARRY_CAPACITY,
+  CHAIN_GATHER_RANGE,
   COSTS,
   DEATH_DURATION,
   DROPOFF_RANGE,
   ENEMY_BASE,
-  FARM_BUILD_TIME,
-  FARM_FOOD,
-  FARM_REGEN,
   GATHER_PER_SEC,
   GATHER_RANGE,
-  MANGONEL_PROJECTILE_SPEED,
+  MANOR_SETTLER_CAP,
+  MANOR_SPAWN_INTERVAL,
   PALISADE_BUILD_TIME,
   PROJECTILE_SPEED,
+  SACRED_FIELD_BUILD_TIME,
+  SACRED_FIELD_FOOD_PER_SEC,
+  SIEGE_PROJECTILE_SPEED,
   TOWER_RANGE,
+  TRAMPLE_DAMAGE,
+  TRAMPLE_RADIUS,
+  UNIT_CLASS,
 } from './constants'
-import { playSound } from './audio'
+import { notifyCombat, playSound } from './audio'
 import { tickFog } from './fog'
-import { createBuilding, createProjectile } from './mapGen'
+import { createBuilding, createProjectile, createUnit } from './mapGen'
 import { dist, moveTowards, nearest } from './pathfinding'
 import {
   addResource,
@@ -48,9 +52,14 @@ import {
   isComplete,
   isDropoff,
   isMilitary,
+  isResource,
+  isMusketKind,
+  isRangedKind,
+  isSiegeKind,
   isUnit,
   type Entity,
   type Team,
+  type UnitKind,
 } from './types'
 
 function list(entities: Record<string, Entity>): Entity[] {
@@ -63,7 +72,21 @@ function startDeath(e: Entity): void {
   e.deathTimer = DEATH_DURATION
   e.order = idleOrder()
   e.hp = 0
+  if (e.kind === 'barracks' && e.team === 'enemy') {
+    const s = useGameStore.getState()
+    s.barracksRebuildAt = s.gameTime + BARRACKS_REBUILD
+  }
   markHud()
+}
+
+function damageMultiplier(attacker: Entity, target: Entity): number {
+  let m = 1
+  const ac = isUnit(attacker) ? UNIT_CLASS[attacker.kind] : null
+  const dc = isUnit(target) ? UNIT_CLASS[target.kind] : null
+  if (ac === 'cavalry' && dc === 'rangedInf') m *= 1.6
+  if ((ac === 'meleeInf' || attacker.kind === 'sepoy') && dc === 'cavalry') m *= 1.6
+  if ((ac === 'siege' || attacker.kind === 'siegeElephant') && isBuilding(target)) m *= 3
+  return m
 }
 
 function applyDamage(e: Entity, amount: number): void {
@@ -112,16 +135,20 @@ function fireAt(
 ): void {
   e.facing = Math.atan2(target.x - e.x, target.z - e.z)
   if (e.attackTimer > 0) return
-  e.attackTimer = e.kind === 'mangonel' ? ATTACK_COOLDOWN * 1.6 : ATTACK_COOLDOWN
+  e.attackTimer = isSiegeKind(e.kind) ? ATTACK_COOLDOWN * 1.6 : ATTACK_COOLDOWN
+  notifyCombat()
+  const dmg = e.attack * damageMultiplier(e, target)
   if (ranged) {
     const id = allocId()
     const splash = e.splash || 0
-    const speed = e.kind === 'mangonel' ? MANGONEL_PROJECTILE_SPEED : PROJECTILE_SPEED
-    all[id] = createProjectile(id, e.team, e.x, e.z, target.id, e.attack, splash, speed)
+    const speed = isSiegeKind(e.kind) ? SIEGE_PROJECTILE_SPEED : PROJECTILE_SPEED
+    all[id] = createProjectile(id, e.team, e.x, e.z, target.id, dmg, splash, speed)
     markHud()
-    playSound(e.kind === 'mangonel' ? 'siege' : 'bow')
+    if (isSiegeKind(e.kind)) playSound('siege')
+    else if (isMusketKind(e.kind)) playSound('musket')
+    else playSound('bow')
   } else {
-    applyDamage(target, e.attack)
+    applyDamage(target, dmg)
     playSound('sword')
   }
 }
@@ -148,11 +175,12 @@ function tickCombat(e: Entity, entities: Entity[], all: Record<string, Entity>, 
 
   if (d > range) {
     moveTowards(e, target.x, target.z, dt, entities, range, target.id)
+    tickTrample(e, entities, dt)
     return
   }
 
   e.attackTimer -= dt
-  fireAt(e, target, all, e.kind === 'archer' || e.kind === 'mangonel')
+  fireAt(e, target, all, isRangedKind(e.kind))
 }
 
 function tickAttackMove(e: Entity, entities: Entity[], all: Record<string, Entity>, dt: number): void {
@@ -165,32 +193,96 @@ function tickAttackMove(e: Entity, entities: Entity[], all: Record<string, Entit
     const d = dist(e.x, e.z, foe.x, foe.z)
     if (d > e.attackRange) {
       moveTowards(e, foe.x, foe.z, dt, entities, e.attackRange, foe.id)
+      tickTrample(e, entities, dt)
       return
     }
     e.attackTimer -= dt
-    fireAt(e, foe, all, e.kind === 'archer' || e.kind === 'mangonel')
+    fireAt(e, foe, all, isRangedKind(e.kind))
     return
   }
   if (moveTowards(e, e.order.x, e.order.z, dt, entities, 0.4)) {
+    e.order = idleOrder()
+  } else {
+    tickTrample(e, entities, dt)
+  }
+}
+
+function tickTrample(e: Entity, entities: Entity[], dt: number): void {
+  if (e.kind !== 'mahout' && e.kind !== 'siegeElephant') return
+  e.gatherTimer += dt
+  if (e.gatherTimer < 0.45) return
+  e.gatherTimer = 0
+  for (const o of entities) {
+    if (!enemiesOf(e.team, o) || !isUnit(o)) continue
+    if (dist(e.x, e.z, o.x, o.z) <= TRAMPLE_RADIUS + o.radius) {
+      applyDamage(o, TRAMPLE_DAMAGE)
+    }
+  }
+}
+
+function nearestSameResource(
+  from: { x: number; z: number },
+  kind: Entity['kind'],
+  entities: Entity[],
+  maxDist = CHAIN_GATHER_RANGE,
+  exceptId?: string | null,
+): Entity | null {
+  let best: Entity | null = null
+  let bestD = maxDist
+  for (const o of entities) {
+    if (exceptId && o.id === exceptId) continue
+    if (o.kind !== kind || o.dying || o.amount <= 0) continue
+    const d = dist(from.x, from.z, o.x, o.z)
+    if (d < bestD) {
+      bestD = d
+      best = o
+    }
+  }
+  return best
+}
+
+function beginGather(e: Entity, node: Entity): void {
+  e.gatherKind = node.kind as NonNullable<Entity['gatherKind']>
+  e.order = { type: 'gather', x: node.x, z: node.z, targetId: node.id }
+}
+
+function beginReturn(e: Entity, last: { x: number; z: number; id: string | null }): void {
+  e.order = { type: 'return', x: last.x, z: last.z, targetId: last.id }
+}
+
+function tryChainGather(
+  e: Entity,
+  from: { x: number; z: number },
+  kind: Entity['kind'] | null,
+  entities: Entity[],
+  exceptId?: string | null,
+): boolean {
+  if (kind !== 'tree' && kind !== 'berryBush' && kind !== 'goldMine' && kind !== 'herd') return false
+  const next = nearestSameResource(from, kind, entities, CHAIN_GATHER_RANGE, exceptId)
+  if (!next) return false
+  beginGather(e, next)
+  return true
+}
+
+function goDropOrIdle(e: Entity, entities: Entity[], last: { x: number; z: number; id: string | null }): void {
+  if (e.carryAmount > 0 && dropoffFor(e, entities)) {
+    beginReturn(e, last)
+  } else {
     e.order = idleOrder()
   }
 }
 
 function tickGather(e: Entity, entities: Entity[], all: Record<string, Entity>, dt: number): void {
   const node = e.order.targetId ? all[e.order.targetId] : null
-  if (!node || node.dying) {
-    e.order = idleOrder()
-    return
-  }
-  if (node.kind === 'farm' && !isComplete(node)) {
-    e.order = idleOrder()
-    return
-  }
+  if (node && isResource(node)) e.gatherKind = node.kind as NonNullable<Entity['gatherKind']>
 
-  if (node.amount <= 0 && node.kind === 'farm') return
-
-  if (node.amount <= 0) {
-    e.order = idleOrder()
+  if (!node || node.dying || node.amount <= 0) {
+    const from = node ?? e
+    const kind = node?.kind ?? e.gatherKind
+    if (e.carryAmount < CARRY_CAPACITY - 0.01 && tryChainGather(e, from, kind, entities, node?.id)) {
+      return
+    }
+    goDropOrIdle(e, entities, { x: from.x, z: from.z, id: node?.id ?? null })
     return
   }
 
@@ -210,19 +302,16 @@ function tickGather(e: Entity, entities: Entity[], all: Record<string, Entity>, 
     playSound('chop')
   }
 
-  if (node.amount <= 0 && node.kind !== 'farm') startDeath(node)
+  if (node.amount <= 0) startDeath(node)
 
-  if (e.carryAmount >= CARRY_CAPACITY - 0.01 || (node.amount <= 0 && node.kind !== 'farm')) {
-    const drop = dropoffFor(e, entities)
-    if (drop) {
-      e.order = {
-        type: 'return',
-        x: drop.x,
-        z: drop.z,
-        targetId: node.amount > 0 || node.kind === 'farm' ? node.id : null,
-      }
-    } else {
-      e.order = idleOrder()
+  if (e.carryAmount >= CARRY_CAPACITY - 0.01) {
+    goDropOrIdle(e, entities, { x: node.x, z: node.z, id: node.id })
+    return
+  }
+
+  if (node.amount <= 0 || node.dying) {
+    if (!tryChainGather(e, node, node.kind, entities, node.id)) {
+      goDropOrIdle(e, entities, { x: node.x, z: node.z, id: node.id })
     }
   }
 }
@@ -251,16 +340,18 @@ function tickReturn(e: Entity, entities: Entity[], all: Record<string, Entity>, 
   }
   const nodeId = e.order.targetId
   const node = nodeId ? all[nodeId] : null
-  if (node && !node.dying && (node.amount > 0 || node.kind === 'farm')) {
-    e.order = { type: 'gather', x: node.x, z: node.z, targetId: node.id }
-  } else {
+  const from = node ?? { x: e.order.x, z: e.order.z }
+  const kind = (node && isResource(node) ? node.kind : e.gatherKind) ?? e.gatherKind
+  if (node && !node.dying && node.amount > 0) {
+    beginGather(e, node)
+  } else if (!tryChainGather(e, from, kind, entities, node?.id)) {
     e.order = idleOrder()
   }
 }
 
 function buildDuration(kind: Entity['kind']): number {
   if (kind === 'palisade') return PALISADE_BUILD_TIME
-  if (kind === 'farm') return FARM_BUILD_TIME
+  if (kind === 'sacredField') return SACRED_FIELD_BUILD_TIME
   return BUILD_TIME
 }
 
@@ -295,9 +386,14 @@ function tickTraining(b: Entity, dt: number): void {
   playSound('spawn')
 }
 
-function tickFarm(e: Entity, dt: number): void {
-  if (!isComplete(e) || e.dying) return
-  e.amount = Math.min(FARM_FOOD, e.amount + FARM_REGEN * dt)
+function tickSacredField(e: Entity, dt: number): void {
+  if (!isComplete(e) || e.dying || e.team !== 'player') return
+  e.amount += SACRED_FIELD_FOOD_PER_SEC * dt
+  if (e.amount >= 1) {
+    const give = Math.floor(e.amount)
+    e.amount -= give
+    addResource('player', 'food', give)
+  }
 }
 
 function tickTower(e: Entity, entities: Entity[], all: Record<string, Entity>, dt: number): void {
@@ -323,7 +419,9 @@ function splashHit(
     if (o.dying || o.kind === 'projectile') continue
     if (o.team === shooterTeam || o.team === 'neutral') continue
     if (!isUnit(o) && !isBuilding(o)) continue
-    if (dist(at.x, at.z, o.x, o.z) <= radius + o.radius) applyDamage(o, amount)
+    let dmg = amount
+    if (isBuilding(o)) dmg *= 3
+    if (dist(at.x, at.z, o.x, o.z) <= radius + o.radius) applyDamage(o, dmg)
   }
 }
 
@@ -358,18 +456,38 @@ function raidTarget(entities: Entity[]): Entity | null {
   return entities.find((e) => e.team === 'player' && (isUnit(e) || isBuilding(e)) && !e.dying) ?? null
 }
 
-function sendRaid(units: Entity[], target: Entity | null, limit: number): void {
+function sendRaid(units: Entity[], target: Entity | null): void {
   if (!target) return
-  let sent = 0
   for (const u of units) {
-    if (sent >= limit) break
-    if (u.order.type === 'attack' && u.order.targetId === target.id) {
-      sent += 1
-      continue
-    }
+    if (u.guard) continue
     u.order = { type: 'attack', x: target.x, z: target.z, targetId: target.id }
-    sent += 1
   }
+}
+
+function spawnWave(kinds: UnitKind[]): Entity[] {
+  const s = useGameStore.getState()
+  const tc = Object.values(s.entities).find(
+    (e) => e.kind === 'townCenter' && e.team === 'enemy' && !e.dying,
+  )
+  if (!tc) return []
+  const spawned: Entity[] = []
+  kinds.forEach((kind, i) => {
+    const ang = (i / Math.max(1, kinds.length)) * Math.PI * 1.6 + 0.4
+    const r = tc.radius + 3.2
+    const id = allocId()
+    const unit = createUnit(
+      id,
+      kind,
+      'enemy',
+      tc.x - Math.cos(ang) * r,
+      tc.z - Math.sin(ang) * r,
+    )
+    s.entities[id] = unit
+    spawned.push(unit)
+  })
+  s.worldEpoch += 1
+  markHud()
+  return spawned
 }
 
 function assignEnemyGather(entities: Entity[]): void {
@@ -383,12 +501,20 @@ function assignEnemyGather(entities: Entity[]): void {
       (o) =>
         !o.dying &&
         o.amount > 10 &&
-        (o.kind === 'tree' || o.kind === 'berryBush' || o.kind === 'goldMine'),
+        (o.kind === 'tree' || o.kind === 'berryBush' || o.kind === 'goldMine' || o.kind === 'herd'),
     )
     if (node) {
       v.order = { type: 'gather', x: node.x, z: node.z, targetId: node.id }
     }
   }
+}
+
+function guardPost(tc: Entity, index: number, total: number): { x: number; z: number } {
+  const n = Math.max(4, total)
+  const ang = (index / n) * Math.PI * 2 + 0.5
+  const ring = Math.floor(index / 8)
+  const r = tc.radius + 4.2 + ring * 1.7
+  return { x: tc.x + Math.cos(ang) * r, z: tc.z + Math.sin(ang) * r }
 }
 
 function defendEnemyBase(entities: Entity[]): void {
@@ -403,102 +529,240 @@ function defendEnemyBase(entities: Entity[]): void {
       (isUnit(o) || isBuilding(o)) &&
       dist(tc.x, tc.z, o.x, o.z) <= AI_DEFEND_RANGE,
   )
-  if (!threat) return
-  for (const u of entities) {
-    if (u.team !== 'enemy' || !isMilitary(u) || u.dying) continue
-    if (dist(u.x, u.z, tc.x, tc.z) > 26) continue
-    u.order = { type: 'attack', x: threat.x, z: threat.z, targetId: threat.id }
-  }
-}
+  const guards = entities.filter((e) => e.guard && e.team === 'enemy' && !e.dying)
 
-function rebuildEnemyBarracks(entities: Entity[]): void {
-  const live = entities.find(
-    (e) => e.kind === 'barracks' && e.team === 'enemy' && !e.dying,
-  )
-  if (live) return
-  if (!spend(COSTS.barracks, 'enemy')) return
-  const spots = [
-    { x: ENEMY_BASE.x - 5.5, z: ENEMY_BASE.z + 1.2 },
-    { x: ENEMY_BASE.x - 6.5, z: ENEMY_BASE.z - 2.2 },
-    { x: ENEMY_BASE.x + 1.5, z: ENEMY_BASE.z - 5.5 },
-  ]
-  for (const spot of spots) {
-    if (!isPlacementValid(spot.x, spot.z, 'barracks')) continue
-    const s = useGameStore.getState()
-    const id = allocId()
-    s.entities[id] = createBuilding(id, 'barracks', 'enemy', spot.x, spot.z, true)
-    s.worldEpoch += 1
-    markHud()
+  if (threat) {
+    for (const u of entities) {
+      if (u.team !== 'enemy' || !isMilitary(u) || u.dying) continue
+      if (!u.guard && dist(u.x, u.z, tc.x, tc.z) > 28) continue
+      u.order = { type: 'attack', x: threat.x, z: threat.z, targetId: threat.id }
+    }
     return
   }
+
+  guards.forEach((g, i) => {
+    const post = guardPost(tc, i, guards.length)
+    if (dist(g.x, g.z, post.x, post.z) > 1.4) {
+      g.order = { type: 'move', x: post.x, z: post.z, targetId: null }
+    } else if (g.order.type !== 'idle') {
+      g.order = idleOrder()
+    }
+  })
+}
+
+function replenishGuards(entities: Entity[]): void {
+  const s = useGameStore.getState()
+  if (s.enemyAge < 1) return
+  const barracks = entities.find(
+    (e) => e.kind === 'barracks' && e.team === 'enemy' && !e.dying && isComplete(e),
+  )
+  if (!barracks) return
+  const guards = entities.filter((e) => e.guard && e.team === 'enemy' && !e.dying)
+  if (guards.length >= s.guardCap) return
+  const extra = spawnUnit('redcoat', 'enemy', barracks)
+  extra.guard = true
+  extra.order = idleOrder()
+}
+
+function addTownHallGuards(count: number): void {
+  const s = useGameStore.getState()
+  const tc = Object.values(s.entities).find(
+    (e) => e.kind === 'townCenter' && e.team === 'enemy' && !e.dying,
+  )
+  if (!tc) return
+  const existing = Object.values(s.entities).filter(
+    (e) => e.guard && e.team === 'enemy' && !e.dying,
+  ).length
+  const kinds: UnitKind[] = ['redcoat', 'pikeman']
+  for (let i = 0; i < count; i += 1) {
+    const n = existing + i
+    const ang = (n / Math.max(6, existing + count)) * Math.PI * 2 + 0.5
+    const r = tc.radius + 4.2 + Math.floor(n / 8) * 1.7
+    const id = allocId()
+    const unit = createUnit(
+      id,
+      kinds[i % kinds.length],
+      'enemy',
+      tc.x + Math.cos(ang) * r,
+      tc.z + Math.sin(ang) * r,
+    )
+    unit.guard = true
+    s.entities[id] = unit
+  }
+  s.guardCap += count
+  s.worldEpoch += 1
+  markHud()
+}
+
+function ensureEnemyBuilding(kind: 'barracks' | 'manor', spots: { x: number; z: number }[]): void {
+  const s = useGameStore.getState()
+  const live = Object.values(s.entities).find(
+    (e) => e.kind === kind && e.team === 'enemy' && !e.dying,
+  )
+  if (live) return
+  if (kind === 'barracks' && s.barracksRebuildAt > 0 && s.gameTime < s.barracksRebuildAt) return
+  if (kind === 'barracks' && !spend(COSTS.barracks, 'enemy')) return
+  const proxy: 'house' | 'barracks' = kind === 'manor' ? 'house' : 'barracks'
+  const spot = spots.find((p) => isPlacementValid(p.x, p.z, proxy)) ?? spots[0]
+  if (!spot) return
+  const id = allocId()
+  s.entities[id] = createBuilding(id, kind, 'enemy', spot.x, spot.z, true)
+  s.worldEpoch += 1
+  markHud()
+}
+
+function tickManors(dt: number): void {
+  const s = useGameStore.getState()
+  const manors = Object.values(s.entities).filter(
+    (e) => e.kind === 'manor' && e.team === 'enemy' && !e.dying && isComplete(e),
+  )
+  if (manors.length === 0) return
+  s.manorTimer += dt
+  if (s.manorTimer < MANOR_SPAWN_INTERVAL) return
+  s.manorTimer = 0
+  const settlers = Object.values(s.entities).filter(
+    (e) => e.kind === 'villager' && e.team === 'enemy' && !e.dying,
+  )
+  if (settlers.length >= MANOR_SETTLER_CAP) return
+  spawnUnit('villager', 'enemy', manors[0])
+}
+
+function laterWaveRoster(waveIndex: number): UnitKind[] {
+  const extra = Math.max(1, waveIndex - 3) * 4
+  const kinds: UnitKind[] = [
+    'redcoat',
+    'redcoat',
+    'redcoat',
+    'redcoat',
+    'redcoat',
+    'redcoat',
+    'redcoat',
+    'redcoat',
+    'dragoon',
+    'dragoon',
+    'dragoon',
+    'dragoon',
+    'falconet',
+  ]
+  const pool: UnitKind[] = ['redcoat', 'hussar', 'dragoon', 'pikeman']
+  for (let i = 0; i < extra; i += 1) kinds.push(pool[i % pool.length])
+  return kinds
 }
 
 function tickAi(dt: number): void {
   const s = useGameStore.getState()
   s.gameTime += dt
   s.aiTimer += dt
-  if (s.aiTimer < AI_INTERVAL) return
-  s.aiTimer = 0
+  tickManors(dt)
 
-  s.enemyWood += 12
-  s.enemyFood += 20
-  s.enemyGold += 10
-  markHud()
-
-  const entities = list(s.entities)
-  assignEnemyGather(entities)
-  defendEnemyBase(entities)
-  rebuildEnemyBarracks(entities)
-
-  if (s.gameTime < AI_SPAWN_DELAY) return
-
-  const barracks = list(s.entities).find(
-    (e) => e.kind === 'barracks' && e.team === 'enemy' && !e.dying && isComplete(e),
-  )
-  const military = list(s.entities).filter((e) => e.team === 'enemy' && isMilitary(e) && !e.dying)
-  const prey = raidTarget(list(s.entities))
-
-  let armyCap = AI_FIRST_WAVE_SIZE
-  if (s.waveIndex >= 1) armyCap = AI_WAVE2_SIZE
-  if (s.waveIndex >= 2) armyCap = AI_WAVE3_SIZE
-  if (s.waveIndex >= 3 && s.gameTime >= s.waveStartTime + AI_REINFORCE_DELAY) armyCap = 8
-
-  if (barracks && military.length < armyCap) {
-    const kind =
-      s.gameTime >= AI_ENEMY_FEUDAL_TIME && military.length % 3 === 2 ? 'archer' : 'swordsman'
-    const cost = COSTS[kind]
-    if (spend(cost, 'enemy')) {
-      const spawned = spawnUnit(kind, 'enemy', barracks)
-      if (s.waveIndex >= 3 && prey) {
-        spawned.order = { type: 'attack', x: prey.x, z: prey.z, targetId: prey.id }
-      }
-    }
+  if (s.gameTime >= AI_MANOR_TIME && s.enemyAge >= 0) {
+    ensureEnemyBuilding('manor', [
+      { x: ENEMY_BASE.x - 6.5, z: ENEMY_BASE.z + 4.2 },
+      { x: ENEMY_BASE.x + 5.5, z: ENEMY_BASE.z - 6 },
+    ])
   }
 
-  const liveMil = list(s.entities).filter((e) => e.team === 'enemy' && isMilitary(e) && !e.dying)
-  const target = raidTarget(list(s.entities))
+  if (s.enemyAge < 1 && s.gameTime >= AI_COMMERCE_TIME) {
+    s.enemyAge = 1
+    markHud()
+  }
 
-  if (s.waveIndex === 0 && s.gameTime >= AI_WAVE_DELAY && liveMil.length >= AI_FIRST_WAVE_SIZE) {
+  if (s.enemyAge >= 1) {
+    ensureEnemyBuilding('barracks', [
+      { x: ENEMY_BASE.x - 5.5, z: ENEMY_BASE.z + 1.2 },
+      { x: ENEMY_BASE.x - 6.5, z: ENEMY_BASE.z - 2.2 },
+      { x: ENEMY_BASE.x + 1.5, z: ENEMY_BASE.z - 5.5 },
+    ])
+  }
+
+  if (s.enemyAge < 2 && s.gameTime >= AI_FORTRESS_TIME) {
+    s.enemyAge = 2
+    markHud()
+  }
+
+  const entities = list(s.entities)
+  const prey = raidTarget(entities)
+
+  if (s.waveIndex === 0 && s.gameTime >= AI_WAVE1_TIME) {
     s.waveStarted = true
     s.waveIndex = 1
     s.waveStartTime = s.gameTime
+    sendRaid(
+      spawnWave([
+        'longbowman',
+        'longbowman',
+        'longbowman',
+        'longbowman',
+        'pikeman',
+        'pikeman',
+        'pikeman',
+        'redcoat',
+        'redcoat',
+      ]),
+      prey,
+    )
     markHud()
-    sendRaid(liveMil, target, AI_FIRST_WAVE_SIZE)
-    return
-  }
-
-  if (s.waveIndex === 1 && s.gameTime >= s.waveStartTime + AI_WAVE2_DELAY && liveMil.length >= 1) {
+  } else if (s.waveIndex === 1 && s.gameTime >= AI_WAVE2_TIME) {
     s.waveIndex = 2
+    s.waveStartTime = s.gameTime
+    sendRaid(
+      spawnWave([
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'hussar',
+        'hussar',
+        'hussar',
+        'hussar',
+      ]),
+      prey,
+    )
     markHud()
-    sendRaid(liveMil, target, AI_WAVE2_SIZE)
-    return
+  } else if (s.waveIndex === 2 && s.gameTime >= AI_WAVE3_TIME) {
+    s.waveIndex = 3
+    s.waveStartTime = s.gameTime
+    sendRaid(
+      spawnWave([
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'redcoat',
+        'dragoon',
+        'dragoon',
+        'dragoon',
+        'dragoon',
+        'falconet',
+      ]),
+      prey,
+    )
+    markHud()
+  } else if (s.waveIndex >= 3 && s.gameTime >= s.waveStartTime + AI_WAVE_INTERVAL) {
+    s.waveIndex += 1
+    s.waveStartTime = s.gameTime
+    sendRaid(spawnWave(laterWaveRoster(s.waveIndex)), prey)
+    addTownHallGuards(2)
+    markHud()
   }
 
-  if (s.waveIndex === 2 && s.gameTime >= s.waveStartTime + AI_WAVE3_DELAY && liveMil.length >= 1) {
-    s.waveIndex = 3
-    markHud()
-    sendRaid(liveMil, target, AI_WAVE3_SIZE)
-  }
+  defendEnemyBase(entities)
+
+  if (s.aiTimer < AI_INTERVAL) return
+  s.aiTimer = 0
+
+  s.enemyWood += 16
+  s.enemyFood += 22
+  s.enemyGold += 12
+  markHud()
+
+  assignEnemyGather(entities)
+  replenishGuards(entities)
 }
 
 function checkWinner(): void {
@@ -545,8 +809,8 @@ export function tick(dt: number): void {
 
     if (isBuilding(e)) {
       tickTraining(e, dt)
-      if (e.kind === 'farm') tickFarm(e, dt)
-      if (e.kind === 'watchTower') tickTower(e, entities, all, dt)
+      if (e.kind === 'sacredField') tickSacredField(e, dt)
+      if (e.kind === 'agraFort') tickTower(e, entities, all, dt)
       continue
     }
 
@@ -556,6 +820,8 @@ export function tick(dt: number): void {
       case 'move':
         if (moveTowards(e, e.order.x, e.order.z, dt, entities, 0.35)) {
           e.order = idleOrder()
+        } else {
+          tickTrample(e, entities, dt)
         }
         break
       case 'gather':
@@ -592,7 +858,7 @@ export function tick(dt: number): void {
     s.ageTimer -= dt
     if (s.ageTimer <= 0) {
       s.aging = false
-      s.playerAge = 1
+      s.playerAge = (s.playerAge + 1) as 1 | 2
       playSound('age')
       markHud()
     }

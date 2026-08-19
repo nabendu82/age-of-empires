@@ -4,7 +4,7 @@ import { fogExplored, fogVisible } from '../game/fog'
 import { useGameStore, view } from '../game/store'
 import { isResource, isUnit, type Entity } from '../game/types'
 
-const SIZE = 168
+const SIZE = 220
 
 function worldToMini(x: number, z: number): { x: number; y: number } {
   return {
@@ -15,11 +15,12 @@ function worldToMini(x: number, z: number): { x: number; y: number } {
 
 function colorFor(e: Entity): string {
   if (e.kind === 'projectile' || e.dying) return ''
-  if (e.team === 'player') return '#60a5fa'
+  if (e.team === 'player') return '#22d3ee'
   if (e.team === 'enemy') return '#f87171'
   if (e.kind === 'goldMine') return '#eab308'
-  if (e.kind === 'farm') return '#86efac'
-  if (e.kind === 'tree' || e.kind === 'berryBush') return '#4ade80'
+  if (e.kind === 'sacredField') return '#86efac'
+  if (e.kind === 'tree') return '#166534'
+  if (e.kind === 'berryBush' || e.kind === 'herd') return '#4ade80'
   return '#a3a3a3'
 }
 

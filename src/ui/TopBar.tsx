@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react'
-import { Apple, Coins, Crown, Swords, TreePine, Users, Volume2, VolumeOff } from 'lucide-react'
+import { Apple, Coins, Crown, Flag, Swords, TreePine, Users, Volume2, VolumeOff } from 'lucide-react'
 import {
-  AI_WAVE2_DELAY,
-  AI_WAVE3_DELAY,
-  AI_WAVE_DELAY,
+  AGE_NAMES,
+  AI_WAVE1_TIME,
+  AI_WAVE2_TIME,
+  AI_WAVE3_TIME,
+  AI_WAVE_INTERVAL,
 } from '../game/constants'
 import { useGameStore } from '../game/store'
 
@@ -37,16 +39,10 @@ function clock(seconds: number): string {
 }
 
 function formatRaid(gameTime: number, waveIndex: number, waveStartTime: number): string {
-  if (waveIndex <= 0) return clock(AI_WAVE_DELAY - gameTime)
-  if (waveIndex === 1) {
-    const left = waveStartTime + AI_WAVE2_DELAY - gameTime
-    return left > 0 ? `W2 ${clock(left)}` : 'Incoming'
-  }
-  if (waveIndex === 2) {
-    const left = waveStartTime + AI_WAVE3_DELAY - gameTime
-    return left > 0 ? `W3 ${clock(left)}` : 'Incoming'
-  }
-  return 'Raiding'
+  if (waveIndex <= 0) return clock(AI_WAVE1_TIME - gameTime)
+  if (waveIndex === 1) return clock(AI_WAVE2_TIME - gameTime)
+  if (waveIndex === 2) return clock(AI_WAVE3_TIME - gameTime)
+  return clock(waveStartTime + AI_WAVE_INTERVAL - gameTime)
 }
 
 export function TopBar() {
@@ -59,6 +55,7 @@ export function TopBar() {
   const waveIndex = useGameStore((s) => s.waveIndex)
   const waveStartTime = useGameStore((s) => s.waveStartTime)
   const playerAge = useGameStore((s) => s.playerAge)
+  const enemyAge = useGameStore((s) => s.enemyAge)
   const aging = useGameStore((s) => s.aging)
   const muted = useGameStore((s) => s.muted)
 
@@ -75,14 +72,20 @@ export function TopBar() {
       />
       <Chip
         icon={<Crown size={18} />}
-        value={aging ? 'Aging…' : playerAge >= 1 ? 'Feudal' : 'Dark'}
+        value={aging ? 'Advancing…' : AGE_NAMES[playerAge]}
         label="Age"
         color="text-amber-300"
       />
       <Chip
+        icon={<Flag size={18} />}
+        value={AGE_NAMES[enemyAge]}
+        label="British"
+        color="text-red-300"
+      />
+      <Chip
         icon={<Swords size={18} />}
         value={formatRaid(gameTime, waveIndex, waveStartTime)}
-        label={waveIndex <= 0 ? 'Enemy raid' : `Wave ${Math.min(waveIndex + 1, 3)}`}
+        label={waveIndex <= 0 ? 'Enemy raid' : `Wave ${waveIndex + 1}`}
         color="text-red-300"
       />
       <button

@@ -1,3 +1,4 @@
+import { GAME_TITLE } from '../game/constants'
 import { CommandBar } from './CommandBar'
 import { HelpButton, HelpOverlay } from './HelpOverlay'
 import { MarqueeOverlay } from './MarqueeOverlay'
@@ -16,10 +17,11 @@ function WinnerOverlay() {
         <div className={`text-3xl font-bold ${victory ? 'text-amber-200' : 'text-red-300'}`}>
           {victory ? 'Victory' : 'Defeat'}
         </div>
+        <p className="mt-1 text-[11px] uppercase tracking-[0.2em] text-amber-200/60">{GAME_TITLE}</p>
         <p className="mt-2 text-sm text-amber-100/80">
           {victory
-            ? 'The enemy Town Center has fallen.'
-            : 'Your Town Center has been destroyed.'}
+            ? 'The British Town Center has fallen.'
+            : 'Your Indian Town Center has been destroyed.'}
         </p>
         <button
           type="button"
@@ -39,7 +41,7 @@ export function HUD() {
       <MarqueeOverlay />
       <div className="flex items-start justify-between px-4 pt-0">
         <div className="pt-3 text-[11px] tracking-wide text-amber-100/80">
-          Age of Empires · RTS Prototype
+          {GAME_TITLE}
         </div>
         <TopBar />
         <div className="pt-3">
